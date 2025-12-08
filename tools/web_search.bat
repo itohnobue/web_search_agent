@@ -17,6 +17,9 @@ if %ERRORLEVEL% neq 0 (
     set "PATH=%USERPROFILE%\.local\bin;%PATH%"
 )
 
+REM Clear PYTHONPATH to avoid conflicts with system Python
+set "PYTHONPATH="
+
 REM Set UTF-8 encoding for proper Unicode handling
 set PYTHONIOENCODING=utf-8
 

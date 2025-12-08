@@ -12,4 +12,5 @@ if ! command -v uv &> /dev/null; then
 fi
 
 # Run with inline dependencies (defined in web_research.py)
-uv run "$SCRIPT_DIR/web_research.py" "$@"
+# Unset PYTHONPATH to avoid conflicts with system Python packages
+env -u PYTHONPATH uv run "$SCRIPT_DIR/web_research.py" "$@"
