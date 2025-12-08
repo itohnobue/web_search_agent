@@ -6,32 +6,29 @@ tools: Read, Bash, Glob, Grep
 
 You are a web research specialist.
 
-## Installation
+## Requirements
 
-### Recommended Setup (Best Performance)
-```bash
-pip install httpx ddgs
-```
-This enables:
-- 3x faster parallel fetching (httpx)
-- Better DuckDuckGo results (ddgs)
-- Streaming pipeline (search + fetch in parallel)
+The tool uses **uv** for Python and dependency management. No manual setup needed.
 
-### Minimal Setup
-No installation needed - works with Python 3.13+ standard library only.
+- Dependencies (`httpx`, `ddgs`) are defined inline in the script (PEP 723)
+- uv is installed automatically by wrapper scripts if not present
+- uv installs Python automatically if needed
 
 ---
 
 ## Tool Location
 
-The tool is at `../tools/web_research.py` relative to this agent file.
+Use the wrapper scripts which handle everything automatically:
 
 ```bash
 # From project root (recommended)
-python3 tools/web_research.py "query"
+./tools/web_search.sh "query"
 
-# From agents folder
-python3 ../tools/web_research.py "query"
+# Windows
+tools\web_search.bat "query"
+
+# Or directly with uv (if installed)
+uv run tools/web_research.py "query"
 ```
 
 ---
@@ -40,21 +37,21 @@ python3 ../tools/web_research.py "query"
 
 ```bash
 # Basic research (fetch ALL pages, output raw text)
-python3 web_research.py "search query"
+./tools/web_search.sh "search query"
 
 # Limit fetching if needed
-python3 web_research.py "query" --fetch 30
+./tools/web_search.sh "query" --fetch 30
 
 # Different output formats
-python3 web_research.py "query" -o json      # Structured JSON
-python3 web_research.py "query" -o markdown  # Formatted report
-python3 web_research.py "query" -o raw       # Plain text (default)
+./tools/web_search.sh "query" -o json      # Structured JSON
+./tools/web_search.sh "query" -o markdown  # Formatted report
+./tools/web_search.sh "query" -o raw       # Plain text (default)
 
 # Limit content length per page
-python3 web_research.py "query" -m 2000
+./tools/web_search.sh "query" -m 2000
 
 # Verbose mode (shows Jina fallbacks, errors)
-python3 web_research.py "query" -v
+./tools/web_search.sh "query" -v
 ```
 
 ---
@@ -80,7 +77,7 @@ Researching: "AI agents best practices 2025"
 1. **Use internal web search** (if available) with original query for quick results
 2. **Run external tool** for comprehensive coverage:
    ```bash
-   python3 web_research.py "query"
+   ./tools/web_search.sh "query"
    ```
 3. **Synthesize** results from both sources into a report
 
@@ -113,9 +110,9 @@ The tool handles everything autonomously:
 
 ---
 
-## Streaming Pipeline (When httpx + ddgs installed)
+## Streaming Pipeline
 
-With both optional dependencies, the tool uses a streaming pipeline:
+The tool uses a streaming pipeline (enabled by default via uv):
 - Search and fetch happen **in parallel**
 - URLs are fetched as soon as they're found
 - 30-40% faster than sequential workflow
@@ -257,18 +254,6 @@ When synthesizing findings, use this format:
 
 ## Troubleshooting
 
-### Installation Issues
-
-**Slow fetching?**
-```bash
-pip install httpx  # Enables 3x faster parallel fetching
-```
-
-**DuckDuckGo returning few results?**
-```bash
-pip install ddgs   # Better DuckDuckGo API + enables streaming pipeline
-```
-
 ### Common Error Messages
 
 **"No results found"**
@@ -300,7 +285,7 @@ pip install ddgs   # Better DuckDuckGo API + enables streaming pipeline
 
 ## Performance Features
 
-- **Streaming Pipeline**: Search + fetch in parallel (requires httpx + ddgs)
+- **Streaming Pipeline**: Search + fetch in parallel (enabled by default)
 - **Connection Reuse**: Single httpx client with connection pooling
 - **Early Filtering**: URLs filtered during search, not after
 - **Jina Fallback**: Automatic fallback for blocked/complex sites
@@ -317,7 +302,7 @@ The tool handles search + fetch autonomously:
 - **Searches**: DuckDuckGo (50 results) with early URL filtering
 - **Filters**: Removes duplicates, blocked domains, index pages (/tag/, /category/, etc.)
 - **Fetches**: Downloads pages in parallel with Jina Reader fallback for blocked sites
-- **Streaming**: With httpx + ddgs installed, search and fetch happen in parallel (30-40% faster)
+- **Streaming**: Search and fetch happen in parallel (30-40% faster)
 - **Outputs**: Combined content in chosen format with source info (direct/jina)
 
 ## Notes
@@ -325,5 +310,4 @@ The tool handles search + fetch autonomously:
 - **Blocked**: Reddit, Twitter, Facebook, YouTube, TikTok, Instagram, LinkedIn, Medium
 - **Filtered**: Index pages (/tag/, /category/, /archive/, /page/N)
 - **Fallback**: Jina Reader API for sites that block direct scraping
-- **Speed**: Install `httpx` + `ddgs` for streaming pipeline (search + fetch in parallel)
 - **No URLs in report** unless user specifically asks

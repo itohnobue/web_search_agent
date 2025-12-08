@@ -29,17 +29,10 @@
 | `-q, --quiet` | Suppress progress | false |
 | `-v, --verbose` | Enable debug logging | false |
 
-### Python Environment
+### Requirements
 
-The wrapper scripts automatically create a virtual environment in `env-ai/` and install dependencies (`httpx`, `ddgs`).
+The wrapper scripts use **uv** for Python and dependency management. uv will be installed automatically if not present.
 
-To set up manually:
-```bash
-# Linux/macOS
-python3 -m venv env-ai
-env-ai/bin/pip install httpx ddgs
-
-# Windows
-python -m venv env-ai
-env-ai\Scripts\pip.exe install httpx ddgs
-```
+- Dependencies are defined inline in `web_research.py` (PEP 723)
+- No manual venv or pip setup needed
+- uv handles Python installation if needed

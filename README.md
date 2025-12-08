@@ -8,9 +8,9 @@ A powerful web research tool for Claude Code that combines DuckDuckGo search wit
 
 2. **Add instructions to CLAUDE.md**: Copy the contents of `CLAUDE.md` into your project's `CLAUDE.md` file (create one if it doesn't exist)
 
-3. **Ask Claude to set up**: Tell Claude: *"Install everything needed for the web search agent as described in the instructions"*
+3. **Test it**: Ask Claude to perform a web search, for example: *"Search the web for latest AI trends in 2025"*
 
-4. **Test it**: Ask Claude to perform a web search, for example: *"Search the web for latest AI trends in 2025"*
+The wrapper scripts will automatically install **uv** (if needed), which handles Python and all dependencies.
 
 ---
 
@@ -19,14 +19,15 @@ A powerful web research tool for Claude Code that combines DuckDuckGo search wit
 - **Autonomous Search + Fetch**: Single command to search, filter, fetch, and report
 - **Smart Filtering**: Automatically filters blocked domains, index pages, and low-content URLs
 - **Jina Reader Fallback**: Uses Jina Reader API for sites that block direct scraping
-- **Streaming Pipeline**: With `httpx` + `ddgs` installed, search and fetch run in parallel (30-40% faster)
+- **Streaming Pipeline**: Search and fetch run in parallel (30-40% faster)
 - **Multiple Output Formats**: Raw text, JSON, or Markdown reports
+- **Zero Setup**: Uses uv with inline dependencies - no manual venv or pip needed
 
-## Manual Installation
+## Usage
 
-### Using Wrapper Scripts
+### Using Wrapper Scripts (Recommended)
 
-The wrapper scripts automatically create a Python virtual environment and install dependencies:
+The wrapper scripts handle everything automatically:
 
 ```bash
 # Linux/macOS
@@ -36,40 +37,48 @@ The wrapper scripts automatically create a Python virtual environment and instal
 tools\web_search.bat "your search query"
 ```
 
-### Manual Setup
+On first run, the scripts will:
+1. Install uv if not present
+2. uv will install Python if needed
+3. uv will install dependencies (httpx, ddgs) from inline metadata
+
+### Direct with uv
+
+If you have uv installed:
 
 ```bash
-# Create virtual environment
-python3 -m venv env-ai
-
-# Install dependencies (optional but recommended)
-env-ai/bin/pip install httpx ddgs
-
-# Run directly
-env-ai/bin/python tools/web_research.py "your search query"
+uv run tools/web_research.py "your search query"
 ```
 
-### Dependencies
+### Requirements
 
-- **Required**: Python 3.11+ (standard library only for basic functionality)
-- **Optional**: `httpx` (3x faster parallel fetching), `ddgs` (better DuckDuckGo results)
+- **uv**: Installed automatically by wrapper scripts, or manually via:
+  ```bash
+  # Linux/macOS
+  curl -LsSf https://astral.sh/uv/install.sh | sh
 
-## Usage
+  # Windows
+  powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+  ```
+- **Python 3.11+**: Installed automatically by uv if needed
+- **Dependencies**: Defined inline in `web_research.py` (PEP 723), installed automatically
+
+## CLI Examples
 
 ```bash
 # Basic search (fetches ALL pages, outputs raw text)
-python3 tools/web_research.py "AI trends 2025"
+./tools/web_search.sh "AI trends 2025"
 
 # Limit number of pages to fetch
-python3 tools/web_research.py "query" --fetch 30
+./tools/web_search.sh "query" --fetch 30
 
 # Different output formats
-python3 tools/web_research.py "query" -o json      # Structured JSON
-python3 tools/web_research.py "query" -o markdown  # Formatted report
-python3 tools/web_research.py "query" -o raw       # Plain text (default)
+./tools/web_search.sh "query" -o json      # Structured JSON
+./tools/web_search.sh "query" -o markdown  # Formatted report
+./tools/web_search.sh "query" -o raw       # Plain text (default)
 
 # Verbose mode (shows Jina fallbacks, errors)
-python3 tools/web_research.py "query" -v
+./tools/web_search.sh "query" -v
 ```
 
 ## CLI Options
