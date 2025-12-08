@@ -2,15 +2,7 @@
 
 A powerful web research tool for Claude Code that combines DuckDuckGo search with intelligent web scraping.
 
-## Features
-
-- **Autonomous Search + Fetch**: Single command to search, filter, fetch, and report
-- **Smart Filtering**: Automatically filters blocked domains, index pages, and low-content URLs
-- **Jina Reader Fallback**: Uses Jina Reader API for sites that block direct scraping
-- **Streaming Pipeline**: With `httpx` + `ddgs` installed, search and fetch run in parallel (30-40% faster)
-- **Multiple Output Formats**: Raw text, JSON, or Markdown reports
-
-## Quick Start
+## Quick Start (Recommended)
 
 1. **Copy files to your project**: Put `tools/` and `agents/` folders into your Claude Code working directory
 
@@ -22,9 +14,17 @@ A powerful web research tool for Claude Code that combines DuckDuckGo search wit
 
 ---
 
+## Features
+
+- **Autonomous Search + Fetch**: Single command to search, filter, fetch, and report
+- **Smart Filtering**: Automatically filters blocked domains, index pages, and low-content URLs
+- **Jina Reader Fallback**: Uses Jina Reader API for sites that block direct scraping
+- **Streaming Pipeline**: With `httpx` + `ddgs` installed, search and fetch run in parallel (30-40% faster)
+- **Multiple Output Formats**: Raw text, JSON, or Markdown reports
+
 ## Manual Installation
 
-### Using Wrapper Scripts (Recommended)
+### Using Wrapper Scripts
 
 The wrapper scripts automatically create a Python virtual environment and install dependencies:
 
@@ -105,10 +105,6 @@ The following domains are automatically filtered (require login or block scrapin
 - reddit.com, twitter.com, x.com, facebook.com
 - youtube.com, tiktok.com, instagram.com
 - linkedin.com, medium.com
-
-## Claude Code Integration
-
-This repository includes a `CLAUDE.md` file with instructions for Claude Code. Copy the `agents/web-searcher.md` file to your project's agents folder to use it as an in-session agent.
 
 ## License
 
