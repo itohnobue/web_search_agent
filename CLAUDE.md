@@ -8,11 +8,11 @@
 2. Use internal web search tool with original query for quick results
 3. Run external tool for comprehensive deep coverage:
    ```bash
-   # Linux/macOS
+   # Linux/macOS: Use the wrapper script
    ./tools/web_search.sh "query"
 
-   # Windows
-   tools\web_search.bat "query"
+   # Windows: Use the batch wrapper script
+   tools/web_search.bat "query"
    ```
 4. Synthesize results from both sources into a report
 
