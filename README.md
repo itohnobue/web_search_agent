@@ -10,9 +10,21 @@ A powerful web research tool for Claude Code that combines DuckDuckGo search wit
 - **Streaming Pipeline**: With `httpx` + `ddgs` installed, search and fetch run in parallel (30-40% faster)
 - **Multiple Output Formats**: Raw text, JSON, or Markdown reports
 
-## Installation
+## Quick Start
 
-### Quick Start (Recommended)
+1. **Copy files to your project**: Put `tools/` and `agents/` folders into your Claude Code working directory
+
+2. **Add instructions to CLAUDE.md**: Copy the contents of `CLAUDE.md` into your project's `CLAUDE.md` file (create one if it doesn't exist)
+
+3. **Ask Claude to set up**: Tell Claude: *"Install everything needed for the web search agent as described in the instructions"*
+
+4. **Test it**: Ask Claude to perform a web search, for example: *"Search the web for latest AI trends in 2025"*
+
+---
+
+## Manual Installation
+
+### Using Wrapper Scripts (Recommended)
 
 The wrapper scripts automatically create a Python virtual environment and install dependencies:
 
