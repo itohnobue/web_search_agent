@@ -2,7 +2,7 @@
 
 A web search agent for any LLM-based service or model (i.e. Claude Code) which gives ability to process 50+ results (web links) for each search request.
 
-## Quick Start (Highly Recommended)
+## Quick start (highly recommended)
 
 1. **Copy files to your project**: Put `tools/` and `agents/` folders into your LLM (Claude Code) working directory
 
@@ -39,7 +39,7 @@ According to my tests (I am using it for all my web search requests) this agent 
 
 ## Usage
 
-### Using Wrapper Scripts (Recommended)
+### Using wrapper scripts (recommended)
 
 The wrapper scripts handle everything automatically:
 
@@ -108,7 +108,7 @@ uv run tools/web_research.py "your search query"
 | `-q, --quiet` | Suppress progress | false |
 | `-v, --verbose` | Enable debug logging | false |
 
-## Example Output
+## Example output
 
 ```
 Researching: "AI agents best practices 2025"
@@ -122,7 +122,7 @@ Researching: "AI agents best practices 2025"
 - `[6 filtered]`: URLs blocked during search (domains, patterns)
 - `(165,448 chars)`: Total content collected
 
-## Blocked Domains
+## Blocked domains
 
 The following domains are automatically filtered (require login or block scraping):
 - reddit.com, twitter.com, x.com, facebook.com
