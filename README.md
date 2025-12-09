@@ -12,13 +12,18 @@ A web search agent for any LLM-based service or model (i.e. Claude Code) which g
 
 The wrapper scripts will automatically install **uv** (if needed), which handles Python and all dependencies.
 
-# What It Does And Why You May Need It (Read This If You Have Questions)
+## What it does and why you may need it (read this first)
 
 The main purpose of this agent is to bring extensive web search capabilities to LLMs so they'll be able to do deep researches by using 50+ web links for each web search operation. It is based on DuckDuckGo search results because it's the only search engine I was able to find which allows such usage.
+
 Most services and tools (including Claude Code) are restricted to use only ~10 first results from their default web search engine which greatly limits their capabilities.
+
 The only exception I am aware of is a web Qwen service with Search function which can find & process 100s of websites for each query.
+
 I wanted to built an universal agent which gives Qwen Search-like capabilities to other LLMs and here is the result.
+
 I am currently using it with Claude Code but it's made model-agnostic and theoretically can be applied to any other service or model out there, with minor instructions tweaking (see CLAUDE.md for details).
+
 According to my tests (I am using it for all my web search requests) this agent tremendously improve any research-based workflows like solving tricky bugs, doing tech researches and any others, where amount of processed information can be the game changer.
 
 ---
