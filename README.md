@@ -20,9 +20,9 @@ Most services and tools (including Claude Code) are restricted to use only ~10 f
 
 The only exception I am aware of is a web Qwen service with Search function which can find & process 100s of websites for each query.
 
-I wanted to built an universal agent which gives Qwen Search-like capabilities to other LLMs and here is the result.
+I wanted to built an universal agent which gives Qwen Search-like capabilities to any other LLM and here is the result.
 
-I am currently using it with Claude Code but it's made model-agnostic and theoretically can be applied to any other service or model out there, with minor instructions tweaking (see CLAUDE.md for details).
+I am currently using it with Claude Code but it's made model-agnostic and theoretically can be applied to any other service or model out there, with minor instructions tweaking (see `CLAUDE.md` for details).
 
 According to my tests (I am using it for all my web search requests) this agent tremendously improve any research-based workflows like solving tricky bugs, doing tech researches and any others, where amount of processed information can be the game changer.
 
