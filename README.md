@@ -1,16 +1,25 @@
 # Web Search Agent
 
-A powerful web research tool for Claude Code that combines DuckDuckGo search with intelligent web scraping.
+A web search agent for any LLM-based service or model (i.e. Claude Code) which gives ability to process 50+ results (web links) for each search request.
 
-## Quick Start (Recommended)
+## Quick Start (Highly Recommended)
 
-1. **Copy files to your project**: Put `tools/` and `agents/` folders into your Claude Code working directory
+1. **Copy files to your project**: Put `tools/` and `agents/` folders into your LLM (Claude Code) working directory
 
-2. **Add instructions to CLAUDE.md**: Copy the contents of `CLAUDE.md` into your project's `CLAUDE.md` file (create one if it doesn't exist)
+2. **Add instructions from CLAUDE.md to your model instructions file**: Copy the contents of `CLAUDE.md` into your project's instruction file (create one if it doesn't exist)
 
-3. **Test it**: Ask Claude to perform a web search, for example: *"Search the web for latest AI trends in 2025"*
+3. **Test it**: Ask your LLM (Claude Code) to perform a web search, for example: *"Search the web and bring me a list of most beautiful Hokusai paintings, explaining why they are great"*
 
 The wrapper scripts will automatically install **uv** (if needed), which handles Python and all dependencies.
+
+# What It Does And Why You May Need It (Read This If You Have Questions)
+
+The main purpose of this agent is to bring extensive web search capabilities to LLMs so they'll be able to do deep researches by using 50+ web links for each web search operation. It is based on DuckDuckGo search results because it's the only search engine I was able to find which allows such usage.
+Most services and tools (including Claude Code) are restricted to use only ~10 first results from their default web search engine which greatly limits their capabilities.
+The only exception I am aware of is a web Qwen service with Search function which can find & process 100s of websites for each query.
+I wanted to built an universal agent which gives Qwen Search-like capabilities to other LLMs and here is the result.
+I am currently using it with Claude Code but it's made model-agnostic and theoretically can be applied to any other service or model out there, with minor instructions tweaking (see CLAUDE.md for details).
+According to my tests (I am using it for all my web search requests) this agent tremendously improve any research-based workflows like solving tricky bugs, doing tech researches and any others, where amount of processed information can be the game changer.
 
 ---
 
