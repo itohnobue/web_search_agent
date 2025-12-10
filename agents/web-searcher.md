@@ -28,7 +28,7 @@ tools\web_search.bat "query"
 |--------|-------------|---------|
 | `-s, --search N` | Number of search results | 50 |
 | `-f, --fetch N` | Max pages to fetch (0=ALL) | 0 |
-| `-m, --max-length N` | Max chars per page | 4000 |
+| `-m, --max-length N` | Max chars per page | 5000 |
 | `-o, --output FORMAT` | json, raw, markdown | raw |
 | `-t, --timeout N` | Fetch timeout (seconds) | 20 |
 | `-c, --concurrent N` | Max concurrent connections | 20 |

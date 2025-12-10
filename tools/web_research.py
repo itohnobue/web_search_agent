@@ -144,10 +144,10 @@ class ResearchConfig:
     """Configuration for research workflow."""
     query: str
     fetch_count: int = 0
-    max_content_length: int = 4000
+    max_content_length: int = 5000
     timeout: int = 20
     quiet: bool = False
-    min_content_length: int = 200
+    min_content_length: int = 600
     max_concurrent: int = 20  # Increased for HTTP/2 multiplexing
     search_results: int = 50
     stream: bool = False
