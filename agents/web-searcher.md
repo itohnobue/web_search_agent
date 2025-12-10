@@ -34,6 +34,7 @@ tools\web_search.bat "query"
 | `-c, --concurrent N` | Max concurrent connections | 10 |
 | `-q, --quiet` | Suppress progress | false |
 | `-v, --verbose` | Enable debug logging | false |
+| `--stream` | Stream output (reduces memory) | false |
 
 ## Output Example
 
