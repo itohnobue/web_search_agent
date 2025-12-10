@@ -32,7 +32,8 @@ According to my tests (I am using it for all my web search requests) this agent 
 
 - **Autonomous Search + Fetch**: Single command to search, filter, fetch, and report
 - **Smart Filtering**: Automatically filters blocked domains, index pages, and low-content URLs
-- **Jina Reader Fallback**: Uses Jina Reader API for sites that block direct scraping
++- **HTTP/2 Connection Reuse**: Single httpx client with connection pooling
+- **CAPTCHA Detection**: Automatically skips blocked pages
 - **Streaming Pipeline**: Search and fetch run in parallel (30-40% faster)
 - **Multiple Output Formats**: Raw text, JSON, or Markdown reports
 - **Zero Setup**: Uses uv with inline dependencies - no manual venv or pip needed
@@ -91,7 +92,7 @@ uv run tools/web_research.py "your search query"
 ./tools/web_search.sh "query" -o markdown  # Formatted report
 ./tools/web_search.sh "query" -o raw       # Plain text (default)
 
-# Verbose mode (shows Jina fallbacks, errors)
+# Verbose mode (shows errors)
 ./tools/web_search.sh "query" -v
 ```
 
@@ -104,7 +105,7 @@ uv run tools/web_research.py "your search query"
 | `-m, --max-length N` | Max chars per page | 4000 |
 | `-o, --output FORMAT` | json, raw, markdown | raw |
 | `-t, --timeout N` | Fetch timeout (seconds) | 20 |
-| `-c, --concurrent N` | Max concurrent connections | 10 |
+| `-c, --concurrent N` | Max concurrent connections | 20 |
 | `-q, --quiet` | Suppress progress | false |
 | `-v, --verbose` | Enable debug logging | false |
 
@@ -113,13 +114,11 @@ uv run tools/web_research.py "your search query"
 ```
 Researching: "AI agents best practices 2025"
   Mode: streaming pipeline (search + fetch in parallel)
-  Done: 43/43 pages (7 via Jina) [6 filtered] (165,448 chars)
+  Done: 35/38 pages (165,448 chars)
 ```
 
 **Output explanation**:
-- `43/43 pages`: Successfully fetched / total URLs found
-- `(7 via Jina)`: Pages that used Jina Reader fallback (blocked sites)
-- `[6 filtered]`: URLs blocked during search (domains, patterns)
+- `43/50 pages`: Successfully fetched / total URLs found
 - `(165,448 chars)`: Total content collected
 
 ## Blocked domains

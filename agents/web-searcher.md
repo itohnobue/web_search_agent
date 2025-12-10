@@ -31,7 +31,7 @@ tools\web_search.bat "query"
 | `-m, --max-length N` | Max chars per page | 4000 |
 | `-o, --output FORMAT` | json, raw, markdown | raw |
 | `-t, --timeout N` | Fetch timeout (seconds) | 20 |
-| `-c, --concurrent N` | Max concurrent connections | 10 |
+| `-c, --concurrent N` | Max concurrent connections | 20 |
 | `-q, --quiet` | Suppress progress | false |
 | `-v, --verbose` | Enable debug logging | false |
 | `--stream` | Stream output (reduces memory) | false |
@@ -41,19 +41,17 @@ tools\web_search.bat "query"
 ```
 Researching: "AI agents best practices 2025"
   Mode: streaming pipeline (search + fetch in parallel)
-  Done: 43/43 pages (7 via Jina) [6 filtered] (165,448 chars)
+  Done: 43/50 pages (165,448 chars)
 ```
 
 - `43/43 pages`: Successfully fetched / total URLs
-- `(7 via Jina)`: Pages via Jina Reader fallback
-- `[6 filtered]`: URLs blocked (domains/patterns)
 
 ## Report Template
 
 ```
 ## Research: [Topic]
 
-**Stats**: [N] pages fetched, [N] filtered, [N] via Jina
+**Stats**: [N] pages fetched
 
 ### Key Findings
 
@@ -81,5 +79,6 @@ Do NOT include URLs in reports unless user specifically asks.
 
 - **Blocked domains**: Reddit, Twitter, Facebook, YouTube, TikTok, Instagram, LinkedIn, Medium
 - **Filtered patterns**: /tag/, /category/, /archive/, /page/N, /shop/, /product/
-- **Fallback**: Jina Reader API for sites blocking direct scraping
 - **Dependencies**: Handled automatically via uv (no setup needed)
+- **"CAPTCHA/blocked"**: Site detected automated access, Content will be skipped
+**"Timeout"**: Site too slow to respond, Content will be skipped

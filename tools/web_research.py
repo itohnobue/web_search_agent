@@ -8,9 +8,9 @@
 Web Research Tool - Autonomous Search + Fetch + Report
 
 Unified tool combining search and fetch into a single optimized workflow:
-1. Search via DuckDuckGo (50 results)
+1. Search via DuckDuckGo (50 results by default)
 2. Filter and deduplicate URLs during search (early filtering)
-3. Fetch content in parallel with connection reuse and Jina fallback
+3. Fetch content in parallel with HTTP/2 connection reuse
 4. Output combined results (streaming or batched)
 
 Usage:
@@ -31,24 +31,18 @@ import re
 import ssl
 import sys
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
-from functools import partial
+from dataclasses import dataclass
 from html import unescape
 from io import StringIO
 from typing import (
     AsyncIterator,
-    Callable,
-    Dict,
     Iterator,
     List,
     Optional,
     Set,
     Tuple,
-    Union,
 )
 
 # =============================================================================
@@ -88,12 +82,27 @@ SKIP_URL_PATTERNS: Tuple[str, ...] = (
     r"/shop/", r"/store/", r"/buy/", r"/product/", r"/products/",
 )
 
-JINA_READER_URL = "https://r.jina.ai/"
-JINA_MIN_INTERVAL: float = 0.5
-JINA_ERROR_MARKERS: Tuple[str, ...] = (
-    "Target URL returned error",
-    "You've been blocked",
-    "SecurityCompromiseError",
+
+# CAPTCHA/blocked page detection markers
+BLOCKED_CONTENT_MARKERS: Tuple[str, ...] = (
+    "verify you are human",
+    "access to this page has been denied",
+    "please complete the security check",
+    "cloudflare ray id:",
+    "checking your browser",
+    "enable javascript and cookies",
+    "unusual traffic from your computer",
+    "are you a robot",
+    "captcha",
+    "perimeterx",
+    "distil networks",
+    "blocked by",
+)
+
+# Navigation text patterns to skip (checked with startswith after lowercasing)
+NAVIGATION_PATTERNS: Tuple[str, ...] = (
+    "skip to",
+    "jump to",
 )
 
 # =============================================================================
@@ -119,25 +128,12 @@ RE_LEADING_SPACE = re.compile(r"\n[ \t]+")
 RE_MULTI_NEWLINE = re.compile(r"\n{3,}")
 RE_WHITESPACE = re.compile(r"\s+")
 
-RE_DDG_RESULT_BLOCK = re.compile(r'<div[^>]*class="[^"]*result[^"]*results_links')
-RE_DDG_LINK = re.compile(r'<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]*)"[^>]*>(.*?)</a>', re.DOTALL | re.IGNORECASE)
-RE_DDG_SNIPPET = re.compile(r'<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>(.*?)</a>', re.DOTALL | re.IGNORECASE)
-
 # =============================================================================
-# OPTIONAL DEPENDENCIES
+# REQUIRED DEPENDENCIES (managed by uv)
 # =============================================================================
 
-try:
-    import httpx
-    HAS_HTTPX = True
-except ImportError:
-    HAS_HTTPX = False
-
-try:
-    from ddgs import DDGS
-    HAS_DDGS = True
-except ImportError:
-    HAS_DDGS = False
+import httpx
+from ddgs import DDGS
 
 # =============================================================================
 # DATA CLASSES
@@ -152,9 +148,9 @@ class ResearchConfig:
     timeout: int = 20
     quiet: bool = False
     min_content_length: int = 200
-    max_concurrent: int = 10
+    max_concurrent: int = 20  # Increased for HTTP/2 multiplexing
     search_results: int = 50
-    stream: bool = False  # New: enable streaming output
+    stream: bool = False
 
 
 @dataclass
@@ -176,7 +172,6 @@ class ResearchStats:
     urls_fetched: int = 0
     urls_filtered: int = 0
     content_chars: int = 0
-    jina_fallback_count: int = 0
 
 
 # =============================================================================
@@ -255,13 +250,29 @@ def is_valid_url(url: str) -> bool:
         return False
 
 
+def is_blocked_content(content: str) -> bool:
+    """Check if content is a CAPTCHA/blocked page (returns True if blocked)."""
+    if not content or len(content) < 50:
+        return False
+    content_lower = content[:2000].lower()  # Only check first 2KB for speed
+    return any(marker in content_lower for marker in BLOCKED_CONTENT_MARKERS)
+
+
+def is_navigation_line(line: str) -> bool:
+    """Check if line is navigation text that should be skipped."""
+    line_lower = line.lower()
+    return any(line_lower.startswith(pattern) for pattern in NAVIGATION_PATTERNS)
+
+
 def extract_text(html: str) -> str:
-    """Extract readable text from HTML (fast version)."""
+    """Extract readable text from HTML (fast version with noise filtering)."""
     html = RE_STRIP_TAGS.sub("", html)
     html = RE_COMMENTS.sub("", html)
 
     title_match = RE_TITLE.search(html)
-    title = unescape(title_match.group(1).strip()) if title_match else ""
+    raw_title = unescape(title_match.group(1).strip()) if title_match else ""
+    # Clean title: remove site name suffix (e.g., " | Site Name" or " - Site Name")
+    title = re.sub(r'\s*[\|\-–—]\s*[^|\-–—]{3,50}$', '', raw_title) if raw_title else ""
 
     html = RE_BR.sub("\n", html)
     html = RE_BLOCK_END.sub("\n\n", html)
@@ -271,6 +282,87 @@ def extract_text(html: str) -> str:
     text = unescape(text)
     text = RE_SPACES.sub(" ", text)
     text = RE_LEADING_SPACE.sub("\n", text)
+    text = RE_MULTI_NEWLINE.sub("\n\n", text)
+
+    # General noise filtering - pattern-based, not site-specific
+    lines = []
+    short_buffer: List[str] = []  # Buffer for consecutive short lines
+    prev_line = ""
+    title_seen = False  # Track if we've seen the title to remove duplicates
+
+    for line in text.split("\n"):
+        line = line.strip()
+
+        # Skip empty lines
+        if not line:
+            continue
+
+        # Skip navigation lines (Skip to content, Jump to, etc.)
+        if is_navigation_line(line):
+            continue
+
+        # Skip lines that are mostly repeated punctuation/symbols (nav remnants)
+        alnum_count = sum(1 for c in line if c.isalnum())
+        if len(line) > 3 and alnum_count / len(line) < 0.3:
+            continue
+
+        # Skip lines with excessive repeated bullets/symbols anywhere
+        bullet_count = sum(1 for c in line if c in "•·●○◦‣⁃")
+        if bullet_count >= 4:
+            continue
+
+        # Skip lines that are just bullet/list markers
+        stripped = line.strip("•-*·►▸▹→‣⁃● ")
+        if not stripped or len(stripped) < 2:
+            continue
+
+        # Skip duplicate of previous line (common with titles)
+        if line == prev_line:
+            continue
+
+        # Skip duplicate title line (appears after # Title heading)
+        if title and not title_seen:
+            # Check if line matches title (exact or without site suffix)
+            line_normalized = re.sub(r'\s*[\|\-–—]\s*[^|\-–—]{3,50}$', '', line)
+            if line_normalized == title or line == raw_title:
+                title_seen = True
+                continue
+
+        # Skip very short lines that look like UI elements (1-2 words, no sentence structure)
+        words = line.split()
+        if len(line) < 15 and len(words) <= 2 and not line.startswith("#"):
+            # Check if it's a meaningful short phrase (has lowercase = likely sentence)
+            if not any(c.islower() for c in line):
+                continue
+
+        # Handle short lines - collapse consecutive ones
+        if len(line) < 25 and not line.startswith("#"):
+            short_buffer.append(line)
+            if len(short_buffer) >= 5:
+                # Join consecutive short lines
+                joined = " | ".join(short_buffer)
+                if len(joined) < 300:
+                    lines.append(joined)
+                short_buffer = []
+        else:
+            # Flush short buffer before adding long line
+            if short_buffer:
+                if len(short_buffer) <= 2:
+                    lines.extend(short_buffer)
+                else:
+                    lines.append(" | ".join(short_buffer))
+                short_buffer = []
+            lines.append(line)
+            prev_line = line
+
+    # Flush remaining short buffer
+    if short_buffer:
+        if len(short_buffer) <= 2:
+            lines.extend(short_buffer)
+        else:
+            lines.append(" | ".join(short_buffer))
+
+    text = "\n".join(lines)
     text = RE_MULTI_NEWLINE.sub("\n\n", text)
     text = text.strip()
 
@@ -294,99 +386,7 @@ def get_random_user_agent() -> str:
 
 
 # =============================================================================
-# JINA READER (Unified implementation)
-# =============================================================================
-
-class JinaRateLimiter:
-    """Rate limiter for Jina API calls with async support.
-
-    Uses sliding window approach to allow concurrent requests while
-    respecting rate limits.
-    """
-
-    def __init__(self, requests_per_second: float = 2.0):
-        self._interval = 1.0 / requests_per_second
-        self._last_call: float = 0.0
-        self._lock = asyncio.Lock() if asyncio else None
-        self._sync_lock = None  # Lazy init for sync
-
-    def wait_sync(self) -> None:
-        """Synchronous wait for rate limit."""
-        import threading
-        if self._sync_lock is None:
-            self._sync_lock = threading.Lock()
-
-        with self._sync_lock:
-            elapsed = time.monotonic() - self._last_call
-            if elapsed < self._interval:
-                time.sleep(self._interval - elapsed)
-            self._last_call = time.monotonic()
-
-    async def wait_async(self) -> None:
-        """Async wait for rate limit with proper concurrency."""
-        async with self._lock:
-            elapsed = time.monotonic() - self._last_call
-            if elapsed < self._interval:
-                await asyncio.sleep(self._interval - elapsed)
-            self._last_call = time.monotonic()
-
-
-_jina_limiter = JinaRateLimiter(requests_per_second=2.0)
-
-
-def _check_jina_content(content: str) -> bool:
-    """Check if Jina content is valid (not an error response)."""
-    return not any(marker in content for marker in JINA_ERROR_MARKERS)
-
-
-def fetch_via_jina_sync(url: str, timeout: int = 20) -> Optional[str]:
-    """Fetch URL via Jina Reader API (synchronous)."""
-    _jina_limiter.wait_sync()
-    try:
-        jina_url = f"{JINA_READER_URL}{url}"
-        headers = {
-            "User-Agent": get_random_user_agent(),
-            "Accept": "text/plain",
-            "X-Return-Format": "text",
-        }
-        req = urllib.request.Request(jina_url, headers=headers)
-        with urllib.request.urlopen(req, timeout=timeout, context=get_ssl_context()) as resp:
-            content = resp.read().decode("utf-8", errors="replace")
-            return content if _check_jina_content(content) else None
-    except Exception as e:
-        logger.debug(f"Jina Reader failed for {url}: {e}")
-    return None
-
-
-async def fetch_via_jina_async(
-    client: "httpx.AsyncClient",
-    url: str,
-    timeout: int = 20
-) -> Optional[str]:
-    """Fetch URL via Jina Reader API (async)."""
-    await _jina_limiter.wait_async()
-    try:
-        jina_url = f"{JINA_READER_URL}{url}"
-        resp = await client.get(
-            jina_url,
-            headers={
-                "User-Agent": get_random_user_agent(),
-                "Accept": "text/plain",
-                "X-Return-Format": "text",
-            },
-            timeout=timeout,
-            follow_redirects=True
-        )
-        if resp.status_code == 200:
-            content = resp.text
-            return content if _check_jina_content(content) else None
-    except Exception as e:
-        logger.debug(f"Jina Reader failed for {url}: {e}")
-    return None
-
-
-# =============================================================================
-# URL FETCHER (Unified core logic)
+# URL FETCHER
 # =============================================================================
 
 def _create_fetch_result(
@@ -410,101 +410,53 @@ def _create_fetch_result(
     return FetchResult(url=url, success=False, error="Content too short or empty")
 
 
-def fetch_url_sync(
-    url: str,
-    headers: Optional[Dict[str, str]] = None,
-    timeout: int = 30
-) -> str:
-    """Fetch URL synchronously using urllib."""
-    if headers is None:
-        headers = {}
-    headers.setdefault("User-Agent", get_random_user_agent())
-    headers.setdefault("Accept", "text/html,application/xhtml+xml")
-    headers.setdefault("Accept-Language", "en-US,en;q=0.9")
-
-    req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=timeout, context=get_ssl_context()) as resp:
-        charset = resp.headers.get_content_charset() or "utf-8"
-        return resp.read().decode(charset, errors="replace")
+MAX_CONTENT_BYTES = 2_000_000  # 2MB max content size
 
 
-def fetch_single_sync(
+async def fetch_single_async(
+    client: httpx.AsyncClient,
     url: str,
     timeout: int,
     min_content_length: int,
-    max_content_length: int
+    max_content_length: int,
+    user_agent: str = ""
 ) -> FetchResult:
-    """Fetch single URL with Jina fallback (synchronous)."""
-    # Try direct fetch
+    """Fetch single URL (async)."""
     try:
-        html = fetch_url_sync(url, timeout=timeout)
-        content = extract_text(html)
-        if len(content) >= min_content_length:
-            return _create_fetch_result(url, content, "direct", min_content_length, max_content_length)
-    except urllib.error.HTTPError as e:
-        if e.code not in (403, 401, 429):
-            return FetchResult(url=url, success=False, error=f"HTTP {e.code}")
-        logger.debug(f"HTTP {e.code} for {url}, trying Jina fallback")
-    except Exception as e:
-        logger.debug(f"Direct fetch failed for {url}: {e}")
+        resp = await client.get(
+            url,
+            headers={
+                "User-Agent": user_agent or get_random_user_agent(),
+                "Accept": "text/html,application/xhtml+xml",
+            },
+            timeout=timeout,
+            follow_redirects=True
+        )
+        if resp.status_code == 200:
+            # Early content-length check to skip huge pages
+            content_length = resp.headers.get('content-length')
+            if content_length and int(content_length) > MAX_CONTENT_BYTES:
+                return FetchResult(url=url, success=False, error="Content too large")
 
-    # Jina fallback
-    jina_content = fetch_via_jina_sync(url, timeout)
-    if jina_content:
-        return _create_fetch_result(url, jina_content, "jina", min_content_length, max_content_length)
+            # Check for CAPTCHA/blocked page before extraction
+            raw_text = resp.text
+            if is_blocked_content(raw_text):
+                return FetchResult(url=url, success=False, error="CAPTCHA/blocked")
 
-    return FetchResult(url=url, success=False, error="All fetch methods failed")
-
-
-# =============================================================================
-# ASYNC FETCHER (httpx)
-# =============================================================================
-
-MAX_CONTENT_BYTES = 2_000_000  # 2MB max content size
-
-if HAS_HTTPX:
-    async def fetch_single_async(
-        client: "httpx.AsyncClient",
-        url: str,
-        timeout: int,
-        min_content_length: int,
-        max_content_length: int
-    ) -> FetchResult:
-        """Fetch single URL with Jina fallback (async)."""
-        # Try direct fetch
-        try:
-            resp = await client.get(
-                url,
-                headers={
-                    "User-Agent": get_random_user_agent(),
-                    "Accept": "text/html,application/xhtml+xml",
-                },
-                timeout=timeout,
-                follow_redirects=True
-            )
-            if resp.status_code == 200:
-                # Early content-length check to skip huge pages
-                content_length = resp.headers.get('content-length')
-                if content_length and int(content_length) > MAX_CONTENT_BYTES:
-                    return FetchResult(url=url, success=False, error="Content too large")
-
-                content = extract_text(resp.text)
-                if len(content) >= min_content_length:
-                    return _create_fetch_result(url, content, "direct", min_content_length, max_content_length)
-            elif resp.status_code not in (403, 401, 429):
-                return FetchResult(url=url, success=False, error=f"HTTP {resp.status_code}")
-            else:
-                logger.debug(f"HTTP {resp.status_code} for {url}, trying Jina fallback")
-        except Exception as e:
-            logger.debug(f"Direct fetch failed for {url}: {e}")
-
-        # Jina fallback - content is already clean markdown, skip extraction
-        jina_content = await fetch_via_jina_async(client, url, timeout)
-        if jina_content:
-            # Jina returns clean text, create result directly without re-extraction
-            return _create_fetch_result(url, jina_content, "jina", min_content_length, max_content_length)
-
-        return FetchResult(url=url, success=False, error="All fetch methods failed")
+            content = extract_text(raw_text)
+            if len(content) >= min_content_length:
+                return _create_fetch_result(url, content, "direct", min_content_length, max_content_length)
+            return FetchResult(url=url, success=False, error="Content too short")
+        else:
+            return FetchResult(url=url, success=False, error=f"HTTP {resp.status_code}")
+    except httpx.TimeoutException:
+        return FetchResult(url=url, success=False, error="Timeout")
+    except httpx.RequestError as e:
+        logger.debug(f"Request error for {url}: {e}")
+        return FetchResult(url=url, success=False, error="Request error")
+    except httpx.HTTPStatusError as e:
+        logger.debug(f"HTTP status error for {url}: {e}")
+        return FetchResult(url=url, success=False, error=f"HTTP {e.response.status_code}")
 
 
 # =============================================================================
@@ -514,13 +466,10 @@ if HAS_HTTPX:
 class DuckDuckGoSearch:
     """DuckDuckGo search with early URL filtering."""
 
-    BASE_URL = "https://html.duckduckgo.com/html/"
-
     def search(
         self,
         query: str,
         num_results: int = 50,
-        delay: float = 2.0,
     ) -> Iterator[Tuple[str, str]]:
         """
         Search DuckDuckGo and yield (url, title) tuples.
@@ -529,120 +478,15 @@ class DuckDuckGoSearch:
         seen_urls: Set[str] = set()
         count = 0
 
-        # Try ddgs library first
-        if HAS_DDGS:
-            try:
-                ddg = DDGS(verify=False)
-                for r in ddg.text(query, max_results=num_results * 2):
-                    url = r.get("href", "")
-                    if url and url not in seen_urls and is_valid_url(url) and not is_blocked_url(url):
-                        seen_urls.add(url)
-                        yield url, r.get("title", "")
-                        count += 1
-                        if count >= num_results:
-                            return
-                if count > 0:
+        ddg = DDGS(verify=False)
+        for r in ddg.text(query, max_results=num_results * 2):
+            url = r.get("href", "")
+            if url and url not in seen_urls and is_valid_url(url) and not is_blocked_url(url):
+                seen_urls.add(url)
+                yield url, r.get("title", "")
+                count += 1
+                if count >= num_results:
                     return
-            except Exception as e:
-                logger.debug(f"ddgs library failed: {e}")
-
-        # Fallback to HTML scraping
-        yield from self._search_html(query, num_results, delay, seen_urls, count)
-
-    def _search_html(
-        self,
-        query: str,
-        num_results: int,
-        delay: float,
-        seen_urls: Set[str],
-        current_count: int
-    ) -> Iterator[Tuple[str, str]]:
-        """Search using HTML scraping fallback."""
-        consecutive_empty = 0
-        max_pages = (num_results // 10) + 3
-        count = current_count
-
-        for page in range(1, max_pages + 1):
-            if consecutive_empty >= 3 or count >= num_results:
-                break
-
-            try:
-                params = {"q": query}
-                if page > 1:
-                    params["s"] = str((page - 1) * 30)
-
-                url = f"{self.BASE_URL}?{urllib.parse.urlencode(params)}"
-                html = fetch_url_sync(url)
-
-                if "anomaly.js" in html or "cc=botnet" in html:
-                    logger.warning("DuckDuckGo bot detection triggered")
-                    break
-
-                page_results = self._parse_html(html)
-
-                if not page_results:
-                    consecutive_empty += 1
-                else:
-                    consecutive_empty = 0
-
-                for title, result_url in page_results:
-                    if result_url not in seen_urls and is_valid_url(result_url) and not is_blocked_url(result_url):
-                        seen_urls.add(result_url)
-                        yield result_url, title
-                        count += 1
-                        if count >= num_results:
-                            return
-
-                if page < max_pages:
-                    time.sleep(delay)
-
-            except Exception as e:
-                logger.debug(f"DuckDuckGo page {page} failed: {e}")
-                consecutive_empty += 1
-
-    def _parse_html(self, html: str) -> List[Tuple[str, str]]:
-        """Parse DuckDuckGo HTML results."""
-        results: List[Tuple[str, str]] = []
-        blocks = RE_DDG_RESULT_BLOCK.split(html)
-
-        for block in blocks[1:]:
-            link_match = RE_DDG_LINK.search(block)
-            if not link_match:
-                continue
-
-            raw_url = link_match.group(1)
-            title = clean_text(link_match.group(2))
-
-            if not title or "ad_provider" in raw_url:
-                continue
-
-            url = self._extract_url(raw_url)
-            if url:
-                results.append((title, url))
-
-        return results
-
-    def _extract_url(self, ddg_url: str) -> Optional[str]:
-        """Extract actual URL from DuckDuckGo redirect."""
-        if not ddg_url:
-            return None
-
-        ddg_url = unescape(ddg_url)
-
-        if ddg_url.startswith(("http://", "https://")) and "duckduckgo.com" not in ddg_url:
-            return ddg_url
-
-        if "uddg=" in ddg_url:
-            try:
-                start = ddg_url.find("uddg=") + 5
-                end = ddg_url.find("&", start)
-                if end == -1:
-                    end = len(ddg_url)
-                return urllib.parse.unquote(ddg_url[start:end])
-            except Exception:
-                pass
-
-        return None
 
 
 # =============================================================================
@@ -676,151 +520,101 @@ def stream_results(
 
 
 # =============================================================================
-# RESEARCH WORKFLOWS
+# RESEARCH WORKFLOW
 # =============================================================================
 
-def run_research_sync(
+async def run_research_async(
     config: ResearchConfig,
     progress: ProgressReporter
-) -> Iterator[FetchResult]:
+) -> AsyncIterator[FetchResult]:
     """
-    Synchronous research workflow (generator).
+    Async streaming research workflow.
     Yields FetchResult objects as they complete.
     """
     progress.message(f'Researching: "{config.query}"')
-    progress.message("  Mode: sequential")
+    progress.message("  Mode: streaming pipeline (search + fetch in parallel)")
 
-    # Search phase
-    progress.message("  Phase 1: Searching...")
-    ddg = DuckDuckGoSearch()
-    urls: List[Tuple[str, str]] = []
-    filtered_count = 0
+    urls: List[str] = []
+    fetch_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+    result_queue: asyncio.Queue[Optional[FetchResult]] = asyncio.Queue()
+    stats = ResearchStats(query=config.query)
 
-    for url, title in ddg.search(config.query, config.search_results):
-        urls.append((url, title))
-        progress.update("search", len(urls), config.search_results)
+    async def search_producer() -> None:
+        """Search and queue URLs for fetching (streams results as they arrive)."""
+        loop = asyncio.get_event_loop()
+        ddg = DuckDuckGoSearch()
 
-    progress.newline()
-    progress.message(f"  Found: {len(urls)} URLs")
-
-    if not urls:
-        progress.message("  Warning: No results found.")
-        return
-
-    # Fetch phase
-    target_count = config.fetch_count if config.fetch_count > 0 else len(urls)
-    urls_to_fetch = urls[:target_count]
-    progress.message(f"  Phase 2: Fetching {len(urls_to_fetch)} pages...")
-
-    fetched = 0
-    for url, title in urls_to_fetch:
-        result = fetch_single_sync(
-            url,
-            config.timeout,
-            config.min_content_length,
-            config.max_content_length
-        )
-        fetched += 1
-        progress.update("fetch", fetched, len(urls_to_fetch))
-        yield result
-
-    progress.newline()
-
-
-if HAS_HTTPX:
-    async def run_research_async(
-        config: ResearchConfig,
-        progress: ProgressReporter
-    ) -> AsyncIterator[FetchResult]:
-        """
-        Async streaming research workflow.
-        Yields FetchResult objects as they complete.
-        """
-        progress.message(f'Researching: "{config.query}"')
-        progress.message("  Mode: streaming pipeline (search + fetch in parallel)")
-
-        urls: List[str] = []
-        fetch_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
-        result_queue: asyncio.Queue[Optional[FetchResult]] = asyncio.Queue()
-        stats = ResearchStats(query=config.query)
-
-        async def search_producer() -> None:
-            """Search and queue URLs for fetching (runs in thread pool)."""
-            loop = asyncio.get_event_loop()
-            ddg = DuckDuckGoSearch()
-
-            # Run blocking search in thread pool to not block event loop
-            def search_sync():
-                return list(ddg.search(config.query, config.search_results))
-
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                search_results = await loop.run_in_executor(executor, search_sync)
-
-            for url, title in search_results:
+        def search_and_stream():
+            """Run search and queue URLs immediately as found."""
+            for url, title in ddg.search(config.query, config.search_results):
                 urls.append(url)
                 stats.urls_searched = len(urls)
-                await fetch_queue.put(url)
-                progress.update("search", len(urls), config.search_results)
-            await fetch_queue.put(None)
+                # Queue URL immediately for fetching (thread-safe)
+                loop.call_soon_threadsafe(fetch_queue.put_nowait, url)
 
-        async def fetch_consumer(client: "httpx.AsyncClient") -> None:
-            """Fetch URLs and queue results."""
-            semaphore = asyncio.Semaphore(config.max_concurrent)
-            pending: List[asyncio.Task] = []
-            fetch_limit = config.fetch_count if config.fetch_count > 0 else float('inf')
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            await loop.run_in_executor(executor, search_and_stream)
 
-            async def fetch_one(url: str) -> None:
-                async with semaphore:
-                    result = await fetch_single_async(
-                        client, url, config.timeout,
-                        config.min_content_length, config.max_content_length
-                    )
-                    await result_queue.put(result)
+        # Signal end of search
+        await fetch_queue.put(None)
 
-            while True:
-                url = await fetch_queue.get()
-                if url is None:
-                    break
-                if len(pending) < fetch_limit:
-                    pending.append(asyncio.create_task(fetch_one(url)))
+    async def fetch_consumer(client: httpx.AsyncClient) -> None:
+        """Fetch URLs and queue results."""
+        semaphore = asyncio.Semaphore(config.max_concurrent)
+        pending: List[asyncio.Task] = []
+        fetch_limit = config.fetch_count  # 0 means unlimited
+        session_ua = get_random_user_agent()  # Single UA per session
 
-            if pending:
-                await asyncio.gather(*pending, return_exceptions=True)
-            await result_queue.put(None)
+        async def fetch_one(url: str) -> None:
+            async with semaphore:
+                result = await fetch_single_async(
+                    client, url, config.timeout,
+                    config.min_content_length, config.max_content_length,
+                    user_agent=session_ua
+                )
+                await result_queue.put(result)
 
-        # HTTP/2 enabled with optimized connection pool
-        async with httpx.AsyncClient(
-            verify=False,
-            http2=True,  # Enable HTTP/2 for multiplexing
-            limits=httpx.Limits(
-                max_connections=config.max_concurrent,
-                max_keepalive_connections=config.max_concurrent,
-                keepalive_expiry=30.0
-            ),
-            timeout=httpx.Timeout(config.timeout, connect=5.0)
-        ) as client:
-            # Start search and fetch concurrently
-            asyncio.create_task(search_producer())
-            asyncio.create_task(fetch_consumer(client))
+        while True:
+            url = await fetch_queue.get()
+            if url is None:
+                break
+            if fetch_limit == 0 or len(pending) < fetch_limit:
+                pending.append(asyncio.create_task(fetch_one(url)))
 
-            # Yield results as they arrive
-            fetched = 0
-            while True:
-                result = await result_queue.get()
-                if result is None:
-                    break
-                fetched += 1
-                if result.success:
-                    stats.urls_fetched += 1
-                    stats.content_chars += len(result.content)
-                    if result.source == "jina":
-                        stats.jina_fallback_count += 1
-                progress.update("fetch", fetched, stats.urls_searched or fetched)
-                yield result
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        await result_queue.put(None)
 
-        progress.newline()
-        jina_info = f" ({stats.jina_fallback_count} via Jina)" if stats.jina_fallback_count > 0 else ""
-        progress.message(f"  Done: {stats.urls_fetched}/{stats.urls_searched} pages{jina_info} ({stats.content_chars:,} chars)")
+    # HTTP/2 enabled with optimized connection pool
+    async with httpx.AsyncClient(
+        verify=False,
+        http2=True,  # Enable HTTP/2 for multiplexing
+        limits=httpx.Limits(
+            max_connections=config.max_concurrent,
+            max_keepalive_connections=config.max_concurrent,
+            keepalive_expiry=30.0
+        ),
+        timeout=httpx.Timeout(config.timeout, connect=5.0)
+    ) as client:
+        # Start search and fetch concurrently
+        asyncio.create_task(search_producer())
+        asyncio.create_task(fetch_consumer(client))
+
+        # Yield results as they arrive
+        fetched = 0
+        while True:
+            result = await result_queue.get()
+            if result is None:
+                break
+            fetched += 1
+            if result.success:
+                stats.urls_fetched += 1
+                stats.content_chars += len(result.content)
+            progress.update("fetch", fetched, stats.urls_searched or fetched)
+            yield result
+
+    progress.newline()
+    progress.message(f"  Done: {stats.urls_fetched}/{stats.urls_searched} pages ({stats.content_chars:,} chars)")
 
 
 # =============================================================================
@@ -882,41 +676,28 @@ def format_batch_markdown(results: List[FetchResult], query: str, max_preview: i
 # MAIN ENTRY POINTS
 # =============================================================================
 
-def run_research(config: ResearchConfig) -> None:
+def run_research(config: ResearchConfig) -> Optional[List[FetchResult]]:
     """Execute research and output results."""
     progress = ProgressReporter(quiet=config.quiet)
 
     if config.stream:
         # Streaming mode: output results as they arrive
-        if HAS_HTTPX and HAS_DDGS:
-            async def stream_async():
-                async for result in run_research_async(config, progress):
-                    if result.success:
-                        if config.quiet:
-                            # In quiet+stream mode, just output content
-                            print(format_result_raw(result) if config.quiet else format_result_raw(result))
-                        else:
-                            print(format_result_raw(result))
-            asyncio.run(stream_async())
-        else:
-            for result in run_research_sync(config, progress):
+        async def stream_async():
+            async for result in run_research_async(config, progress):
                 if result.success:
                     print(format_result_raw(result))
-    else:
-        # Batch mode: collect all results, then format
-        results: List[FetchResult] = []
+        asyncio.run(stream_async())
+        return None
 
-        if HAS_HTTPX and HAS_DDGS:
-            async def collect_async():
-                async for result in run_research_async(config, progress):
-                    results.append(result)
-            asyncio.run(collect_async())
-        else:
-            for result in run_research_sync(config, progress):
-                results.append(result)
+    # Batch mode: collect all results, then format
+    results: List[FetchResult] = []
 
-        # Output formatted results
-        return results
+    async def collect_async():
+        async for result in run_research_async(config, progress):
+            results.append(result)
+    asyncio.run(collect_async())
+
+    return results
 
 
 def main() -> None:
