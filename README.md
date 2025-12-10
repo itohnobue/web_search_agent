@@ -16,7 +16,7 @@ The wrapper scripts will automatically install **uv** (if needed), which handles
 
 The main purpose of this agent is to bring extensive web search capabilities to LLMs so they'll be able to do deep researches by using 50+ web links for each web search operation. It is based on DuckDuckGo search results because it's the only search engine I was able to find which allows such usage.
 
-Most services and tools (including Claude Code) are restricted to use only ~10 first results from their default web search engine which greatly limits their capabilities.
+Most services and tools (including Claude Code) are restricted to use only ~10-20 first results from their default web search engine which greatly limits their capabilities.
 
 The only exception I am aware of is a web Qwen service with Search function which can find & process 100s of websites for each query.
 
@@ -32,7 +32,7 @@ According to my tests (I am using it for all my web search requests) this agent 
 
 - **Autonomous Search + Fetch**: Single command to search, filter, fetch, and report
 - **Smart Filtering**: Automatically filters blocked domains, index pages, and low-content URLs
-+- **HTTP/2 Connection Reuse**: Single httpx client with connection pooling
+- **HTTP/2 Connection Reuse**: Single httpx client with connection pooling
 - **CAPTCHA Detection**: Automatically skips blocked pages
 - **Streaming Pipeline**: Search and fetch run in parallel (30-40% faster)
 - **Multiple Output Formats**: Raw text, JSON, or Markdown reports
