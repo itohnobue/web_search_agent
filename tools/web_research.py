@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["httpx", "ddgs"]
+# dependencies = ["httpx[http2]", "ddgs"]
 # ///
 # -*- coding: utf-8 -*-
 """
@@ -34,8 +34,11 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from functools import partial
 from html import unescape
+from io import StringIO
 from typing import (
     AsyncIterator,
     Callable,
@@ -97,8 +100,11 @@ JINA_ERROR_MARKERS: Tuple[str, ...] = (
 # COMPILED REGEX PATTERNS
 # =============================================================================
 
-# URL filtering patterns
-RE_SKIP_PATTERNS = tuple(re.compile(p) for p in SKIP_URL_PATTERNS)
+# URL filtering - single combined pattern for performance
+_BLOCKED_URL_PATTERN = re.compile(
+    r'(?:' + '|'.join(re.escape(d) for d in BLOCKED_DOMAINS) + r')|(?:' + '|'.join(SKIP_URL_PATTERNS) + r')',
+    re.IGNORECASE
+)
 
 # HTML extraction patterns - Phase 1: Remove invisible elements
 RE_INVISIBLE = re.compile(
@@ -275,15 +281,8 @@ def clean_text(text: str) -> str:
 
 
 def is_blocked_url(url: str) -> bool:
-    """Check if URL should be blocked."""
-    url_lower = url.lower()
-    for domain in BLOCKED_DOMAINS:
-        if domain in url_lower:
-            return True
-    for pattern in RE_SKIP_PATTERNS:
-        if pattern.search(url_lower):
-            return True
-    return False
+    """Check if URL should be blocked (optimized single-regex check)."""
+    return bool(_BLOCKED_URL_PATTERN.search(url))
 
 
 def is_valid_url(url: str) -> bool:
@@ -407,28 +406,40 @@ def get_random_user_agent() -> str:
 # =============================================================================
 
 class JinaRateLimiter:
-    """Rate limiter for Jina API calls."""
+    """Rate limiter for Jina API calls with async support.
 
-    def __init__(self, min_interval: float = JINA_MIN_INTERVAL):
-        self.min_interval = min_interval
+    Uses sliding window approach to allow concurrent requests while
+    respecting rate limits.
+    """
+
+    def __init__(self, requests_per_second: float = 2.0):
+        self._interval = 1.0 / requests_per_second
         self._last_call: float = 0.0
+        self._lock = asyncio.Lock() if asyncio else None
+        self._sync_lock = None  # Lazy init for sync
 
     def wait_sync(self) -> None:
         """Synchronous wait for rate limit."""
-        elapsed = time.monotonic() - self._last_call
-        if elapsed < self.min_interval:
-            time.sleep(self.min_interval - elapsed)
-        self._last_call = time.monotonic()
+        import threading
+        if self._sync_lock is None:
+            self._sync_lock = threading.Lock()
+
+        with self._sync_lock:
+            elapsed = time.monotonic() - self._last_call
+            if elapsed < self._interval:
+                time.sleep(self._interval - elapsed)
+            self._last_call = time.monotonic()
 
     async def wait_async(self) -> None:
-        """Async wait for rate limit."""
-        elapsed = time.monotonic() - self._last_call
-        if elapsed < self.min_interval:
-            await asyncio.sleep(self.min_interval - elapsed)
-        self._last_call = time.monotonic()
+        """Async wait for rate limit with proper concurrency."""
+        async with self._lock:
+            elapsed = time.monotonic() - self._last_call
+            if elapsed < self._interval:
+                await asyncio.sleep(self._interval - elapsed)
+            self._last_call = time.monotonic()
 
 
-_jina_limiter = JinaRateLimiter()
+_jina_limiter = JinaRateLimiter(requests_per_second=2.0)
 
 
 def _check_jina_content(content: str) -> bool:
@@ -557,6 +568,8 @@ def fetch_single_sync(
 # ASYNC FETCHER (httpx)
 # =============================================================================
 
+MAX_CONTENT_BYTES = 2_000_000  # 2MB max content size
+
 if HAS_HTTPX:
     async def fetch_single_async(
         client: "httpx.AsyncClient",
@@ -578,6 +591,11 @@ if HAS_HTTPX:
                 follow_redirects=True
             )
             if resp.status_code == 200:
+                # Early content-length check to skip huge pages
+                content_length = resp.headers.get('content-length')
+                if content_length and int(content_length) > MAX_CONTENT_BYTES:
+                    return FetchResult(url=url, success=False, error="Content too large")
+
                 content = extract_text(resp.text)
                 if len(content) >= min_content_length:
                     return _create_fetch_result(url, content, "direct", min_content_length, max_content_length)
@@ -588,9 +606,10 @@ if HAS_HTTPX:
         except Exception as e:
             logger.debug(f"Direct fetch failed for {url}: {e}")
 
-        # Jina fallback
+        # Jina fallback - content is already clean markdown, skip extraction
         jina_content = await fetch_via_jina_async(client, url, timeout)
         if jina_content:
+            # Jina returns clean text, create result directly without re-extraction
             return _create_fetch_result(url, jina_content, "jina", min_content_length, max_content_length)
 
         return FetchResult(url=url, success=False, error="All fetch methods failed")
@@ -834,9 +853,18 @@ if HAS_HTTPX:
         stats = ResearchStats(query=config.query)
 
         async def search_producer() -> None:
-            """Search and queue URLs for fetching."""
+            """Search and queue URLs for fetching (runs in thread pool)."""
+            loop = asyncio.get_event_loop()
             ddg = DuckDuckGoSearch()
-            for url, title in ddg.search(config.query, config.search_results):
+
+            # Run blocking search in thread pool to not block event loop
+            def search_sync():
+                return list(ddg.search(config.query, config.search_results))
+
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                search_results = await loop.run_in_executor(executor, search_sync)
+
+            for url, title in search_results:
                 urls.append(url)
                 stats.urls_searched = len(urls)
                 await fetch_queue.put(url)
@@ -868,10 +896,16 @@ if HAS_HTTPX:
                 await asyncio.gather(*pending, return_exceptions=True)
             await result_queue.put(None)
 
+        # HTTP/2 enabled with optimized connection pool
         async with httpx.AsyncClient(
             verify=False,
-            limits=httpx.Limits(max_connections=config.max_concurrent),
-            timeout=config.timeout
+            http2=True,  # Enable HTTP/2 for multiplexing
+            limits=httpx.Limits(
+                max_connections=config.max_concurrent,
+                max_keepalive_connections=config.max_concurrent,
+                keepalive_expiry=30.0
+            ),
+            timeout=httpx.Timeout(config.timeout, connect=5.0)
         ) as client:
             # Start search and fetch concurrently
             asyncio.create_task(search_producer())
@@ -918,43 +952,38 @@ def format_batch_json(results: List[FetchResult], query: str) -> str:
 
 
 def format_batch_raw(results: List[FetchResult]) -> str:
-    """Format all results as raw text."""
-    lines = []
+    """Format all results as raw text (optimized with StringIO)."""
+    buffer = StringIO()
     for r in results:
         if r.success:
-            lines.append(f"=== {r.url} ===")
-            lines.append(r.content)
-            lines.append("")
-    return "\n".join(lines)
+            buffer.write(f"=== {r.url} ===\n")
+            buffer.write(r.content)
+            buffer.write("\n\n")
+    return buffer.getvalue()
 
 
 def format_batch_markdown(results: List[FetchResult], query: str, max_preview: int = 4000) -> str:
-    """Format all results as markdown."""
+    """Format all results as markdown (optimized with StringIO)."""
     successful = [r for r in results if r.success]
-    lines = [
-        f"# Research: {query}",
-        "",
-        f"**Sources Analyzed**: {len(successful)} pages",
-        "",
-        "---",
-        ""
-    ]
+    buffer = StringIO()
+
+    buffer.write(f"# Research: {query}\n\n")
+    buffer.write(f"**Sources Analyzed**: {len(successful)} pages\n\n")
+    buffer.write("---\n\n")
 
     for r in successful:
         if r.content:
             title = r.title or r.url
-            lines.append(f"## {title}")
-            lines.append(f"*Source: {r.url}*")
-            lines.append("")
-            content_preview = r.content[:max_preview]
+            buffer.write(f"## {title}\n")
+            buffer.write(f"*Source: {r.url}*\n\n")
             if len(r.content) > max_preview:
-                content_preview += "..."
-            lines.append(content_preview)
-            lines.append("")
-            lines.append("---")
-            lines.append("")
+                buffer.write(r.content[:max_preview])
+                buffer.write("...")
+            else:
+                buffer.write(r.content)
+            buffer.write("\n\n---\n\n")
 
-    return "\n".join(lines)
+    return buffer.getvalue()
 
 
 # =============================================================================
