@@ -106,56 +106,17 @@ _BLOCKED_URL_PATTERN = re.compile(
     re.IGNORECASE
 )
 
-# HTML extraction patterns - Phase 1: Remove invisible elements
-RE_INVISIBLE = re.compile(
-    r"<(script|style|noscript|template|svg|canvas|iframe|object|embed|video|audio)[^>]*>.*?</\1>",
-    re.DOTALL | re.IGNORECASE
-)
+# HTML extraction - simple fast patterns (optimized for speed)
+RE_STRIP_TAGS = re.compile(r"<(script|style|nav|footer|header|aside|noscript)[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE)
 RE_COMMENTS = re.compile(r"<!--.*?-->", re.DOTALL)
-
-# Phase 2: Remove elements by boilerplate class/id patterns
-_BOILERPLATE_CLASSES = (
-    r'nav\b', r'navbar', r'navigation', r'menu', r'breadcrumb',
-    r'sidebar', r'aside', r'widget', r'related',
-    r'header', r'footer', r'masthead', r'bottom',
-    r'social', r'share', r'sharing', r'follow',
-    r'comment', r'disqus', r'respond',
-    r'\bad\b', r'ads\b', r'advert', r'sponsor', r'promo',
-    r'popup', r'modal', r'overlay', r'banner', r'cookie', r'gdpr', r'consent',
-    r'newsletter', r'subscribe', r'signup', r'login', r'search-form',
-    r'pagination', r'pager', r'toc', r'table-of-contents',
-    r'skip-link', r'screen-reader', r'sr-only', r'visually-hidden',
-)
-RE_BOILERPLATE_CLASS = re.compile(
-    r'<([a-z][a-z0-9]*)\s+[^>]*(?:class|id)\s*=\s*["\'][^"\']*(?:' +
-    '|'.join(_BOILERPLATE_CLASSES) +
-    r')[^"\']*["\'][^>]*>.*?</\1>',
-    re.DOTALL | re.IGNORECASE
-)
-
-# Phase 3: Remove semantic boilerplate tags
-RE_SEMANTIC_BOILERPLATE = re.compile(
-    r"<(nav|aside|footer|header|figcaption)[^>]*>.*?</\1>",
-    re.DOTALL | re.IGNORECASE
-)
-
-# Phase 4: Extract main content area
-RE_MAIN_CONTENT = re.compile(r"<(article|main)[^>]*>(.*?)</\1>", re.DOTALL | re.IGNORECASE)
-RE_BODY = re.compile(r"<body[^>]*>(.*?)</body>", re.DOTALL | re.IGNORECASE)
-
-# Text extraction patterns
 RE_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
-RE_HEADING = re.compile(r"<h([1-6])[^>]*>(.*?)</h\1>", re.IGNORECASE | re.DOTALL)
-RE_BLOCK_TAGS = re.compile(r"</(p|div|h[1-6]|li|tr|article|section|blockquote|pre)>", re.IGNORECASE)
-RE_LI = re.compile(r"<li[^>]*>", re.IGNORECASE)
 RE_BR = re.compile(r"<br\s*/?>", re.IGNORECASE)
-RE_P_TAG = re.compile(r"<p[^>]*>", re.IGNORECASE)
+RE_BLOCK_END = re.compile(r"</(p|div|h[1-6]|li|tr|article|section)>", re.IGNORECASE)
+RE_LI = re.compile(r"<li[^>]*>", re.IGNORECASE)
 RE_ALL_TAGS = re.compile(r"<[^>]+>")
-
-# Whitespace normalization
-RE_MULTI_SPACE = re.compile(r"[ \t]+")
+RE_SPACES = re.compile(r"[ \t]+")
+RE_LEADING_SPACE = re.compile(r"\n[ \t]+")
 RE_MULTI_NEWLINE = re.compile(r"\n{3,}")
-RE_LEADING_WHITESPACE = re.compile(r"\n[ \t]+")
 RE_WHITESPACE = re.compile(r"\s+")
 
 RE_DDG_RESULT_BLOCK = re.compile(r'<div[^>]*class="[^"]*result[^"]*results_links')
@@ -295,95 +256,26 @@ def is_valid_url(url: str) -> bool:
 
 
 def extract_text(html: str) -> str:
-    """Extract readable text from HTML with boilerplate removal.
-
-    Uses a multi-phase approach:
-    1. Remove invisible elements (script, style, etc.)
-    2. Remove elements with boilerplate class/id patterns
-    3. Remove semantic boilerplate tags (nav, aside, footer, header)
-    4. Extract from <article>/<main> if present
-    5. Convert to clean text with markdown headings
-    """
-    # Extract title first
-    title_match = RE_TITLE.search(html)
-    title = unescape(title_match.group(1).strip()) if title_match else ""
-    # Clean title (remove site name suffix)
-    if " | " in title:
-        title = title.split(" | ")[0].strip()
-    elif " - " in title:
-        parts = title.split(" - ")
-        if len(parts) > 1 and len(parts[0]) > 10:
-            title = parts[0].strip()
-
-    # Phase 1: Remove invisible/script elements
-    html = RE_INVISIBLE.sub("", html)
+    """Extract readable text from HTML (fast version)."""
+    html = RE_STRIP_TAGS.sub("", html)
     html = RE_COMMENTS.sub("", html)
 
-    # Phase 2: Remove elements with boilerplate class/id (multiple passes for nesting)
-    for _ in range(3):
-        html = RE_BOILERPLATE_CLASS.sub("", html)
+    title_match = RE_TITLE.search(html)
+    title = unescape(title_match.group(1).strip()) if title_match else ""
 
-    # Phase 3: Remove semantic boilerplate tags
-    html = RE_SEMANTIC_BOILERPLATE.sub("", html)
-
-    # Phase 4: Try to extract main content area
-    main_match = RE_MAIN_CONTENT.search(html)
-    if main_match:
-        html = main_match.group(2)
-    else:
-        body_match = RE_BODY.search(html)
-        if body_match:
-            html = body_match.group(1)
-
-    # Phase 5: Convert to text with structure
-
-    # Convert headings to markdown
-    def heading_replace(m: re.Match) -> str:
-        level = int(m.group(1))
-        text = RE_ALL_TAGS.sub("", m.group(2)).strip()
-        if text:
-            return f"\n\n{'#' * level} {text}\n\n"
-        return ""
-
-    html = RE_HEADING.sub(heading_replace, html)
-
-    # Add line breaks for block elements
     html = RE_BR.sub("\n", html)
-    html = RE_BLOCK_TAGS.sub("\n\n", html)
-    html = RE_P_TAG.sub("\n", html)
-    html = RE_LI.sub("- ", html)
+    html = RE_BLOCK_END.sub("\n\n", html)
+    html = RE_LI.sub("• ", html)
 
-    # Strip remaining tags
     text = RE_ALL_TAGS.sub(" ", html)
     text = unescape(text)
-
-    # Normalize whitespace
-    text = RE_MULTI_SPACE.sub(" ", text)
-    text = RE_LEADING_WHITESPACE.sub("\n", text)
-    text = RE_MULTI_NEWLINE.sub("\n\n", text)
-
-    # Final cleanup: remove short lines (UI remnants) and empty bullets
-    lines = []
-    for line in text.split("\n"):
-        line = line.strip()
-        # Skip empty lines and very short non-heading lines
-        if not line:
-            continue
-        if len(line) <= 2 and not line.startswith("#"):
-            continue
-        # Skip empty bullet points
-        if line in ("-", "•", "*"):
-            continue
-        lines.append(line)
-
-    text = "\n".join(lines)
+    text = RE_SPACES.sub(" ", text)
+    text = RE_LEADING_SPACE.sub("\n", text)
     text = RE_MULTI_NEWLINE.sub("\n\n", text)
     text = text.strip()
 
-    # Add title if not already in content
-    if title and not text.startswith("#"):
+    if title:
         text = f"# {title}\n\n{text}"
-
     return text
 
 
