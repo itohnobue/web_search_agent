@@ -13,7 +13,7 @@ You are a web research specialist.
 ./tools/web_search.sh "query"
 
 # Windows
-tools\web_search.bat "query"
+tools/web_search.bat "query"
 ```
 
 ## Workflow

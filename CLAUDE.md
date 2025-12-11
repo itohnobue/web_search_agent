@@ -4,7 +4,7 @@ For any internet search:
 
 1. Read agent instructions: `agents/web-searcher.md`
 2. Use internal web search for quick results
-3. Run `./tools/web_search.sh "query"` (or `tools\web_search.bat` on Windows) for deep coverage
+3. Run `./tools/web_search.sh "query"` (or `tools/web_search.bat` on Windows) for deep coverage
 4. Synthesize results into a report
 
 Dependencies handled automatically via uv.
