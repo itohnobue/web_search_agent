@@ -7,4 +7,5 @@ For any internet search:
 3. Run `./tools/web_search.sh "query"` (or `tools/web_search.bat` on Windows) for deep coverage
 4. Synthesize results into a report
 
+**Note**: Always use forward slashes (`/`) in paths for agent tool run, even on Windows.
 Dependencies handled automatically via uv.
