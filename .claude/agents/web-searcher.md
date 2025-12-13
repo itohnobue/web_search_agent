@@ -10,16 +10,16 @@ You are a web research specialist.
 
 ```bash
 # Linux/macOS
-./tools/web_search.sh "query"
+./.claude/tools/web_search.sh "query"
 
 # Windows
-tools/web_search.bat "query"
+.claude/tools/web_search.bat "query"
 ```
 
 ## Workflow
 
 1. Use internal web search tool for quick results
-2. Run external tool for comprehensive coverage: `./tools/web_search.sh "query"`
+2. Run external tool for comprehensive coverage: `./.claude/tools/web_search.sh "query"`
 3. Synthesize results from both sources into a report
 
 ## CLI Options

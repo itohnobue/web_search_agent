@@ -4,7 +4,7 @@ A web search agent for any LLM-based service or model (i.e. Claude Code) which g
 
 ## Quick start (highly recommended)
 
-1. **Copy files to your project**: Put `tools/` and `agents/` folders into your LLM (Claude Code) working directory
+1. **Copy files to your project**: Put `.claude/` folder (with `tools/` and `agents/` inside) into your LLM (Claude Code) working directory
 
 2. **Add instructions from CLAUDE.md to your model instructions file**: Copy the contents of `CLAUDE.md` into your project's instruction file (create one if it doesn't exist)
 
@@ -46,10 +46,10 @@ The wrapper scripts handle everything automatically:
 
 ```bash
 # Linux/macOS
-./tools/web_search.sh "your search query"
+./.claude/tools/web_search.sh "your search query"
 
 # Windows
-tools\web_search.bat "your search query"
+.claude/tools/web_search.bat "your search query"
 ```
 
 On first run, the scripts will:
@@ -62,7 +62,7 @@ On first run, the scripts will:
 If you have uv installed:
 
 ```bash
-uv run tools/web_research.py "your search query"
+uv run .claude/tools/web_research.py "your search query"
 ```
 
 ### Requirements
@@ -76,24 +76,24 @@ uv run tools/web_research.py "your search query"
   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
   ```
 - **Python 3.11+**: Installed automatically by uv if needed
-- **Dependencies**: Defined inline in `web_research.py` (PEP 723), installed automatically
+- **Dependencies**: Defined inline in `.claude/tools/web_research.py` (PEP 723), installed automatically
 
 ## CLI Examples
 
 ```bash
 # Basic search (fetches ALL pages, outputs raw text)
-./tools/web_search.sh "AI trends 2025"
+./.claude/tools/web_search.sh "AI trends 2025"
 
 # Limit number of pages to fetch
-./tools/web_search.sh "query" --fetch 30
+./.claude/tools/web_search.sh "query" --fetch 30
 
 # Different output formats
-./tools/web_search.sh "query" -o json      # Structured JSON
-./tools/web_search.sh "query" -o markdown  # Formatted report
-./tools/web_search.sh "query" -o raw       # Plain text (default)
+./.claude/tools/web_search.sh "query" -o json      # Structured JSON
+./.claude/tools/web_search.sh "query" -o markdown  # Formatted report
+./.claude/tools/web_search.sh "query" -o raw       # Plain text (default)
 
 # Verbose mode (shows errors)
-./tools/web_search.sh "query" -v
+./.claude/tools/web_search.sh "query" -v
 ```
 
 ## CLI Options
